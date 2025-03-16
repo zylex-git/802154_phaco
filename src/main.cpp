@@ -4,23 +4,11 @@
  * SPDX-License-Identifier: LicenseRef-Nordic-5-Clause
  */
 
-#include <zephyr/kernel.h>
-#include <zephyr/net/ieee802154_radio.h>
-#include <zephyr/shell/shell.h>
-#include <zephyr/shell/shell_uart.h>
-#include <zephyr/sys/util.h>
-#include <nrf_802154.h>
-#include <nrf_802154_const.h>
-#include <stdlib.h>
-#include <dk_buttons_and_leds.h>
+#include "phaco_if.h"
 
-#define HEX_STRING_LENGTH (2 * MAX_PACKET_SIZE + 1)
-
-static const struct device *radio_dev =
-	DEVICE_DT_GET(DT_CHOSEN(zephyr_ieee802154));
+static const struct device *radio_dev = DEVICE_DT_GET(DT_CHOSEN(zephyr_ieee802154));
 static struct ieee802154_radio_api *radio_api;
 static const struct shell *uart_shell;
-static char hex_string[HEX_STRING_LENGTH];
 static bool heartbeat_led_state;
 static bool packet_led_state;
 static k_timeout_t heartbeat_interval;
@@ -67,15 +55,10 @@ int net_recv_data(struct net_if *iface, struct net_pkt *pkt)
 
 	packet_led_state = !packet_led_state;
 	dk_set_led(DK_LED4, packet_led_state);
-	bin2hex(psdu, length, hex_string, HEX_STRING_LENGTH);
 
-	shell_print(uart_shell,
-		    "received: %s power: %d lqi: %u time: %llu",
-		    hex_string,
-		    rssi,
-		    lqi,
-		    timestamp);
-
+	IEEE802154Parser parser;
+	parser.phaco_feed_tx(psdu, length, lqi, rssi, timestamp);
+	
 	net_pkt_unref(pkt);
 
 	return 0;
@@ -143,12 +126,21 @@ int main(void)
 	radio_api = (struct ieee802154_radio_api *)radio_dev->api;
 	__ASSERT_NO_MSG(radio_api);
 
-#if !IS_ENABLED(CONFIG_NRF_802154_SERIALIZATION)
-	/* The serialization API does not support disabling the auto-ack. */
-	nrf_802154_auto_ack_set(false);
-#endif
+	#if !IS_ENABLED(CONFIG_NRF_802154_SERIALIZATION)
+		/* The serialization API does not support disabling the auto-ack. */
+		nrf_802154_auto_ack_set(false);
+	#endif
 
 	radio_api->configure(radio_dev, IEEE802154_CONFIG_PROMISCUOUS, &config);
+
+	// Initialize CDC ACM
+    if (!device_is_ready(IEEE802154Parser::cdc_dev)) {
+        return -ENODEV;
+    }
+
+    if (usb_enable(NULL)) {
+        return -ENODEV;
+    }
 
 	return 0;
 }
